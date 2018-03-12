@@ -21,6 +21,7 @@ import android.graphics.Matrix;
 import android.net.NetworkInfo;
 import android.os.Build;
 import android.view.Gravity;
+import com.squareup.picasso3.RequestHandler.Result;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
@@ -74,8 +75,8 @@ class BitmapHunter implements Runnable {
       return true;
     }
 
-    @Override public Result load(Request request, int networkPolicy) throws IOException {
-      throw new IllegalStateException("Unrecognized type of request: " + request);
+    @Override public void load(Request request, int networkPolicy, Callback callback) {
+      callback.onError(new IllegalStateException("Unrecognized type of request: " + request));
     }
   };
 
@@ -194,10 +195,8 @@ class BitmapHunter implements Runnable {
   }
 
   Bitmap hunt() throws IOException {
-    Bitmap bitmap = null;
-
     if (shouldReadFromMemoryCache(memoryPolicy)) {
-      bitmap = cache.get(key);
+      Bitmap bitmap = cache.get(key);
       if (bitmap != null) {
         stats.dispatchCacheHit();
         loadedFrom = MEMORY;
@@ -209,52 +208,61 @@ class BitmapHunter implements Runnable {
     }
 
     networkPolicy = retryCount == 0 ? NetworkPolicy.OFFLINE.index : networkPolicy;
-    RequestHandler.Result result = requestHandler.load(data, networkPolicy);
-    if (result != null) {
-      loadedFrom = result.getLoadedFrom();
-      exifOrientation = result.getExifOrientation();
-      bitmap = result.getBitmap();
+    requestHandler.load(data, networkPolicy,
+        new Callback() {
+          @Override public void onSuccess(Result result) {
+            Bitmap bitmap;
+            if (result != null) {
+              loadedFrom = result.getLoadedFrom();
+              exifOrientation = result.getExifOrientation();
+              bitmap = result.getBitmap();
 
-      // If there was no Bitmap then we need to decode it from the stream.
-      if (bitmap == null) {
-        Source source = result.getSource();
-        try {
-          bitmap = decodeStream(source, data);
-        } finally {
-          try {
-            //noinspection ConstantConditions If bitmap is null then source is guranteed non-null.
-            source.close();
-          } catch (IOException ignored) {
-          }
-        }
-      }
-    }
+              // If there was no Bitmap then we need to decode it from the stream.
+              if (bitmap == null) {
+                Source source = result.getSource();
+                try {
+                  bitmap = decodeStream(source, data);
+                } finally {
+                  try {
+                    //noinspection ConstantConditions If bitmap is null then source is guranteed non-null.
+                    source.close();
+                  } catch (IOException ignored) {
+                  }
+                }
+              }
+            }
 
-    if (bitmap != null) {
-      if (picasso.loggingEnabled) {
-        log(OWNER_HUNTER, VERB_DECODED, data.logId());
-      }
-      stats.dispatchBitmapDecoded(bitmap);
-      if (data.needsTransformation() || exifOrientation != 0) {
-        synchronized (DECODE_LOCK) {
-          if (data.needsMatrixTransform() || exifOrientation != 0) {
-            bitmap = transformResult(data, bitmap, exifOrientation);
-            if (picasso.loggingEnabled) {
-              log(OWNER_HUNTER, VERB_TRANSFORMED, data.logId());
+            if (bitmap != null) {
+              if (picasso.loggingEnabled) {
+                log(OWNER_HUNTER, VERB_DECODED, data.logId());
+              }
+              stats.dispatchBitmapDecoded(bitmap);
+              if (data.needsTransformation() || exifOrientation != 0) {
+                synchronized (DECODE_LOCK) {
+                  if (data.needsMatrixTransform() || exifOrientation != 0) {
+                    bitmap = transformResult(data, bitmap, exifOrientation);
+                    if (picasso.loggingEnabled) {
+                      log(OWNER_HUNTER, VERB_TRANSFORMED, data.logId());
+                    }
+                  }
+                  if (data.hasCustomTransformations()) {
+                    bitmap = applyCustomTransformations(data.transformations, bitmap);
+                    if (picasso.loggingEnabled) {
+                      log(OWNER_HUNTER, VERB_TRANSFORMED, data.logId(), "from custom transformations");
+                    }
+                  }
+                }
+                if (bitmap != null) {
+                  stats.dispatchBitmapTransformed(bitmap);
+                }
+              }
             }
           }
-          if (data.hasCustomTransformations()) {
-            bitmap = applyCustomTransformations(data.transformations, bitmap);
-            if (picasso.loggingEnabled) {
-              log(OWNER_HUNTER, VERB_TRANSFORMED, data.logId(), "from custom transformations");
-            }
+
+          @Override public void onError(Throwable t) {
+            return null;
           }
-        }
-        if (bitmap != null) {
-          stats.dispatchBitmapTransformed(bitmap);
-        }
-      }
-    }
+        });
 
     return bitmap;
   }
