@@ -24,6 +24,7 @@ import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.IBinder;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 import android.widget.RemoteViews;
@@ -31,7 +32,6 @@ import com.squareup.picasso3.Picasso.RequestTransformer;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import okhttp3.Call;
@@ -47,8 +47,6 @@ import static android.provider.ContactsContract.Contacts.Photo.CONTENT_DIRECTORY
 import static com.squareup.picasso3.Picasso.LoadedFrom.MEMORY;
 import static com.squareup.picasso3.Picasso.Priority;
 import static com.squareup.picasso3.Utils.createKey;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -249,23 +247,25 @@ class TestUtils {
   }
 
   static Picasso mockPicasso() {
-    // Mock a RequestHandler that can handle any request.
-    RequestHandler requestHandler = mock(RequestHandler.class);
-    try {
-      Bitmap defaultResult = makeBitmap();
-      RequestHandler.Result result = new RequestHandler.Result(defaultResult, MEMORY);
-      when(requestHandler.load(any(Request.class), anyInt())).thenReturn(result);
-      when(requestHandler.canHandleRequest(any(Request.class))).thenReturn(true);
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+    // Inject a RequestHandler that can handle any request.
+    RequestHandler requestHandler = new RequestHandler() {
+      @Override public boolean canHandleRequest(Request data) {
+        return true;
+      }
+
+      @Nullable @Override public void load(Request request, int networkPolicy, Callback callback) {
+        Bitmap defaultResult = makeBitmap();
+        RequestHandler.Result result = new RequestHandler.Result(defaultResult, MEMORY);
+        callback.onSuccess(result);
+      }
+    };
 
     return mockPicasso(requestHandler);
   }
 
   static Picasso mockPicasso(RequestHandler requestHandler) {
     Picasso picasso = mock(Picasso.class);
-    when(picasso.getRequestHandlers()).thenReturn(Arrays.asList(requestHandler));
+    when(picasso.getRequestHandlers()).thenReturn(Collections.singletonList(requestHandler));
     return picasso;
   }
 
